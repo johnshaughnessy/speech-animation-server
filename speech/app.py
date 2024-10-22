@@ -1,7 +1,9 @@
-from speech.api.fastapi import create_app
 import argparse
 import uvicorn
+import ssl
+
 from speech.utils.settings import settings
+from speech.api.fastapi import create_app
 
 
 def main():
@@ -25,16 +27,19 @@ def main():
         "--cert-file",
         type=str,
         default=settings.path_ssl_cert,
-        help="path to the ssl certificate file (default: cert.pem)",
+        help="path to the ssl certificate file (default: dev-cert.pem)",
     )
     parser.add_argument(
         "--key-file",
         type=str,
         default=settings.path_ssl_key,
-        help="path to the ssl key file (default: key.pem)",
+        help="path to the ssl key file (default: dev-key.pem)",
     )
     args = parser.parse_args()
     app = create_app(args.path_client)
+
+    ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ssl_context.load_cert_chain(args.cert_file, args.key_file)
 
     uvicorn.run(
         app,
