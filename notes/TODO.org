@@ -1,6 +1,6 @@
 * DONE Build client
 * DONE Serve client from http server
-* TODO Establish WebSocket connection between server and client
+* DONE Establish WebSocket connection between server and client
 * TODO Establish WebRTC connection between server and client
 * TODO Play audio from server to client
 * TODO Stream audio from client to server
