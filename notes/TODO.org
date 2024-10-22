@@ -1,0 +1,13 @@
+* TODO Build client
+* TODO Serve client from http server
+* TODO Establish WebRTC connection between server and client
+* TODO Play audio from server to client
+* TODO Stream audio from client to server
+* TODO Transcribe audio using whisper
+* TODO Get timecodes from whisper
+* TODO Get chat reply from bot
+* TODO Synthesize audio (text-to-speech). Find out if synthesized audio comes with timestamps.
+* TODO If not, feed synthesized audio into whisper to retrieve timestamps.
+* TODO Guess "emotions" at timestamps
+* TODO Produce library of "emotion" images and or poses
+* TODO Replace image (or animate to pose) on client
