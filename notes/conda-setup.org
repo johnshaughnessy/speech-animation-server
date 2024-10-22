@@ -1,0 +1,11 @@
+* Conda Setup
+
+This is how I set up the conda environment. The first machine I used was a ROCm machine, so I called the environment "speech-animation-server-rocm". Later, when I move to a CUDA machine, I'll create the "speech-animation-server-cuda" environment.
+
+#+begin_src bash
+export CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1 # Otherwise, conda commands fail.
+conda create -n speech-animation-server-rocm python=3.10
+conda activate speech-animation-server-rocm
+pip install aiortc fastapi uvicorn[standard] python-dotenv pydantic-settings
+conda env export --no-builds > conda_env_rocm.yml # export
+#+end_src
