@@ -2,6 +2,9 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
+# Routers
+from speech.api.routes.websockets import router as websocket_router
+
 
 def create_app(path_client: str):
 
@@ -14,6 +17,8 @@ def create_app(path_client: str):
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    app.include_router(websocket_router)
 
     app.mount(
         "/",

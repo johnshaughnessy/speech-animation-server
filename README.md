@@ -27,8 +27,21 @@ Set up a conda environment according to your system (rocm or cuda).
 The following environment files are provided for conda:
 
 - `conda_env_rocm.yml`
+- `conda_env_cuda.yml`
 
 The conda environment must be activated before running the server.
+
+If you `pip install` a package and want to update the conda environment file, run:
+
+``` bash
+conda env export --no-builds > conda_env_rocm.yml
+```
+
+or
+
+``` bash
+conda env export --no-builds > conda_env_cuda.yml
+```
 
 # Run the development server
 
