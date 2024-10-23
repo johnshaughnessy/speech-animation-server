@@ -2,10 +2,18 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from aiortc import RTCSessionDescription, RTCPeerConnection
 from speech.utils.log import log
 from speech.utils.websockets import send, websockets, websocket_for_session_id
-from speech.utils.webrtc import peer_connections, peer_connection_for_session_id
+from speech.utils.webrtc import (
+    webrtc_connections,
+    WebRTCConnection,
+    webrtc_connection_for_session_id,
+    on_incoming_audio_track,
+)
 from speech.types import WebsocketMessage
+from speech.utils.async_task import create_task
 import asyncio
 import json
+
+from speech.utils.delayed_echo_track import DelayedEchoTrack
 
 router = APIRouter()
 
@@ -21,23 +29,29 @@ async def on_webrtc_icecandidate(websocket: WebSocket, message: WebsocketMessage
 
 async def on_webrtc_sdp_offer(websocket: WebSocket, message: WebsocketMessage):
     session_id = message.session_id
-    if peer_connection_for_session_id(session_id):
+
+    existing_connection = webrtc_connection_for_session_id(session_id)
+    if existing_connection is not None:
         log.warn(
             "Received new webrtc session message, but we already have a connection. Closing old connection."
         )
-        await peer_connection_for_session_id(session_id).close()
-        peer_connections[session_id] = None
-        logger.info("Closed old connection")
+        await existing_connection.pc.close()
+        del webrtc_connections[session_id]
 
     pc = RTCPeerConnection()
-    peer_connections[session_id] = pc
+    webrtc_connection = WebRTCConnection(pc)
+    webrtc_connections[session_id] = webrtc_connection
+
+    delayed_echo_track = DelayedEchoTrack()
+    webrtc_connection.delayed_echo_track = delayed_echo_track
+    pc.addTrack(delayed_echo_track)
+    log.info(f"Added echo track to connection.")
 
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
         log.info(f"Connection state change: {pc.connectionState}")
         if pc.connectionState == "closed":
             await pc.close()
-            # TODO If we have an opus track, close it
 
     @pc.on("icecandidate")
     async def on_icecandidate(candidate):
@@ -46,15 +60,15 @@ async def on_webrtc_sdp_offer(websocket: WebSocket, message: WebsocketMessage):
 
     @pc.on("track")
     def on_track(track):
-        log.info(f"Received track: {track.kind}")
-        if track.kind == "audio":
-            pc.addTrack(track)
+        log.info(f"Received track", track.id, track.kind, track)
+        create_task(on_incoming_audio_track(webrtc_connection, track))
 
     browser_sdp = message.data.get("sdp")
     offer = RTCSessionDescription(sdp=browser_sdp["sdp"], type=browser_sdp["type"])
     await pc.setRemoteDescription(offer)
-    # TODO: Add opus track
+
     await pc.setLocalDescription(await pc.createAnswer())
+    log.info(pc.localDescription.sdp)
     await send(
         websocket,
         "webrtc_sdp_answer",
@@ -80,7 +94,7 @@ async def handle_message(websocket: WebSocket, message: WebsocketMessage):
                 {"error": f"Error processing message: {str(message)}"}
             )
     else:
-        log.warning(f"No handler for event: {message.name}")
+        log.warn(f"No handler for event: {message.name}")
         await websocket.send_json({"error": f"Unknown event: {message.name}"})
 
 
@@ -95,7 +109,7 @@ async def websocket_endpoint(websocket: WebSocket):
             if session_id is None:
                 session_id = message.session_id
                 websockets[session_id] = websocket
-            asyncio.create_task(handle_message(websocket, message))
+            create_task(handle_message(websocket, message))
 
     except WebSocketDisconnect:
         log.info("WebSocket disconnected")
@@ -109,7 +123,7 @@ async def websocket_endpoint(websocket: WebSocket):
         if session_id:
             if websocket_for_session_id(session_id):
                 del websockets[session_id]
-            if peer_connection_for_session_id(session_id):
-                await peer_connection_for_session_id(session_id).close()
-                del peer_connections[session_id]
+            if webrtc_connection_for_session_id(session_id):
+                log.error("Need to clean up webrtc connections")
+                del webrtc_connections[session_id]
         pass
