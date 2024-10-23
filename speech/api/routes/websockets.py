@@ -1,34 +1,71 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from aiortc import RTCSessionDescription, RTCPeerConnection
 from speech.utils.log import log
-from speech.utils.serialize import serialize
+from speech.utils.websockets import send, websockets, websocket_for_session_id
+from speech.utils.webrtc import peer_connections, peer_connection_for_session_id
 from speech.types import WebsocketMessage
 import asyncio
 import json
 
-
-async def send(websocket: WebSocket, name: str, data=None):
-    message = {"name": name, "data": serialize(data)}
-    await websocket.send_json(message)  # TODO: Retries?
-
-
 router = APIRouter()
-
-websockets = {}
-
-
-def websocket_for_session_id(session_id: str):
-    return websockets.get(session_id)
 
 
 async def on_echo_message(websocket: WebSocket, message: WebsocketMessage):
-    log.info(f"Echoing message: {message.data}")
     await send(websocket, "echo", message.data)
+
+
+async def on_webrtc_icecandidate(websocket: WebSocket, message: WebsocketMessage):
+    # log.info("Received ICE candidate: ", message.data)
+    pass
+
+
+async def on_webrtc_sdp_offer(websocket: WebSocket, message: WebsocketMessage):
+    session_id = message.session_id
+    if peer_connection_for_session_id(session_id):
+        log.warn(
+            "Received new webrtc session message, but we already have a connection. Closing old connection."
+        )
+        await peer_connection_for_session_id(session_id).close()
+        peer_connections[session_id] = None
+        logger.info("Closed old connection")
+
+    pc = RTCPeerConnection()
+    peer_connections[session_id] = pc
+
+    @pc.on("connectionstatechange")
+    async def on_connectionstatechange():
+        log.info(f"Connection state change: {pc.connectionState}")
+        if pc.connectionState == "closed":
+            await pc.close()
+            # TODO If we have an opus track, close it
+
+    @pc.on("icecandidate")
+    async def on_icecandidate(candidate):
+        # TODO: Is this necessary?
+        await send(websocket, "webrtc_icecandidate", {"candidate": candidate})
+
+    @pc.on("track")
+    def on_track(track):
+        log.info(f"Received track: {track.kind}")
+        if track.kind == "audio":
+            pc.addTrack(track)
+
+    browser_sdp = message.data.get("sdp")
+    offer = RTCSessionDescription(sdp=browser_sdp["sdp"], type=browser_sdp["type"])
+    await pc.setRemoteDescription(offer)
+    # TODO: Add opus track
+    await pc.setLocalDescription(await pc.createAnswer())
+    await send(
+        websocket,
+        "webrtc_sdp_answer",
+        {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type},
+    )
 
 
 message_handlers = {
     "echo": on_echo_message,
-    # "webrtc_candidate_message": on_webrtc_candidate_message,
-    # "webrtc_session_message": on_webrtc_session_message,
+    "webrtc_icecandidate": on_webrtc_icecandidate,
+    "webrtc_sdp_offer": on_webrtc_sdp_offer,
 }
 
 
@@ -54,13 +91,11 @@ async def websocket_endpoint(websocket: WebSocket):
     session_id = None
     try:
         while True:
-            websocket_message = WebsocketMessage(**(await websocket.receive_json()))
+            message = WebsocketMessage(**(await websocket.receive_json()))
             if session_id is None:
-                session_id = websocket_message.session_id
+                session_id = message.session_id
                 websockets[session_id] = websocket
-
-            log.info(f"Received message", websocket_message)
-            asyncio.create_task(handle_message(websocket, websocket_message))
+            asyncio.create_task(handle_message(websocket, message))
 
     except WebSocketDisconnect:
         log.info("WebSocket disconnected")
@@ -72,5 +107,9 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close(code=1011, reason="Internal server error")
     finally:
         if session_id:
-            del websockets[session_id]
+            if websocket_for_session_id(session_id):
+                del websockets[session_id]
+            if peer_connection_for_session_id(session_id):
+                await peer_connection_for_session_id(session_id).close()
+                del peer_connections[session_id]
         pass
